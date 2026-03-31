@@ -26,9 +26,15 @@ ARG KONG_ARTIFACT=kong-${KONG_VERSION}.el10.${TARGETARCH}.rpm
 COPY ${KONG_ARTIFACT} /tmp/kong.rpm
 
 # hadolint ignore=DL3041
-RUN microdnf install -y shadow-utils perl \
+RUN microdnf install --assumeyes --nodocs \
+      findutils \
+      shadow-utils \
+      unzip \
     && useradd -r -U kong \
-    && rpm -ivh --nodeps /tmp/kong.rpm \
+    && rpm -qpR /tmp/kong.rpm \
+      | grep -v rpmlib \
+      | xargs -n1 -t microdnf install --assumeyes --nodocs \
+    && rpm -iv /tmp/kong.rpm \
     && rm -f /tmp/kong.rpm \
     && microdnf clean all \
     && chown kong:0 /usr/local/bin/kong \
