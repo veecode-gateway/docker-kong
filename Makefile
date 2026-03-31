@@ -68,6 +68,15 @@ test: KONG_DOCKER_TAG?=$(DOCKER_TAG)
 test:
 	BASE=$(BASE) ./tests/test.sh --suite "Docker-Kong test suite"
 
+build_apip: KONG_VERSION?=
+build_apip:
+	docker build \
+		--no-cache \
+		--build-arg KONG_VERSION=$(KONG_VERSION) \
+		-t veecode/kong:$(KONG_VERSION) \
+		-f Dockerfile.rhel10 \
+		.
+
 release-rhel: build_v2
 	$(MAKE) PACKAGE=rpm build_v2
 	@if \

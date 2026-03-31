@@ -1,0 +1,52 @@
+ARG KONG_BASE_IMAGE=registry.access.redhat.com/ubi10-minimal
+FROM --platform=$TARGETPLATFORM $KONG_BASE_IMAGE
+
+LABEL maintainer="VeeCode <docker@veecode.codes>"
+
+ARG KONG_VERSION
+ENV KONG_VERSION=$KONG_VERSION
+
+LABEL name="Kong" \
+      vendor="VeeCode" \
+      version="$KONG_VERSION" \
+      release="1" \
+      url="https://konghq.com" \
+      summary="VeeCode APIP - API Platform based on Kong Gateway" \
+      description="VeeCode APIP - API Platform based on Kong Gateway"
+
+COPY LICENSE /licenses/
+
+ARG KONG_PREFIX=/usr/local/kong
+ENV KONG_PREFIX=$KONG_PREFIX
+
+ARG TARGETARCH
+
+ARG KONG_ARTIFACT=kong-${KONG_VERSION}.el10.${TARGETARCH}.rpm
+
+COPY ${KONG_ARTIFACT} /tmp/kong.rpm
+
+# hadolint ignore=DL3041
+RUN microdnf install -y /tmp/kong.rpm \
+    && microdnf clean all \
+    && rm -f /tmp/kong.rpm \
+    && chown kong:0 /usr/local/bin/kong \
+    && chown -R kong:0 /usr/local/kong \
+    && ln -sf /usr/local/openresty/bin/resty /usr/local/bin/resty \
+    && ln -sf /usr/local/openresty/luajit/bin/luajit /usr/local/bin/luajit \
+    && ln -sf /usr/local/openresty/luajit/bin/luajit /usr/local/bin/lua \
+    && ln -sf /usr/local/openresty/nginx/sbin/nginx /usr/local/bin/nginx \
+    && kong version
+
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+
+USER kong
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
+
+EXPOSE 8000 8443 8001 8444
+
+STOPSIGNAL SIGQUIT
+
+HEALTHCHECK --interval=60s --timeout=10s --retries=10 CMD kong-health
+
+CMD ["kong", "docker-start"]
