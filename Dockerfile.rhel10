@@ -34,7 +34,7 @@ RUN microdnf install --assumeyes --nodocs \
     && rpm -qpR /tmp/kong.rpm \
       | grep -v rpmlib \
       | xargs -n1 sh -c 'microdnf install --assumeyes --nodocs "$1" || true' _ \
-    && rpm -iv /tmp/kong.rpm \
+    && rpm -iv --nodeps /tmp/kong.rpm \
     && rm -f /tmp/kong.rpm \
     && microdnf clean all \
     && chown kong:0 /usr/local/bin/kong \
