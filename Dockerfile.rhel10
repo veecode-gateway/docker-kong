@@ -26,7 +26,7 @@ ARG KONG_ARTIFACT=kong-${KONG_VERSION}.el10.${TARGETARCH}.rpm
 COPY ${KONG_ARTIFACT} /tmp/kong.rpm
 
 # hadolint ignore=DL3041
-RUN microdnf install -y shadow-utils \
+RUN microdnf install -y shadow-utils perl \
     && useradd -r -U kong \
     && rpm -ivh --nodeps /tmp/kong.rpm \
     && rm -f /tmp/kong.rpm \
