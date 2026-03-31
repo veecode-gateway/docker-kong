@@ -33,7 +33,7 @@ RUN microdnf install --assumeyes --nodocs \
     && useradd -r -U kong \
     && rpm -qpR /tmp/kong.rpm \
       | grep -v rpmlib \
-      | xargs -n1 -t microdnf install --assumeyes --nodocs \
+      | xargs -n1 sh -c 'microdnf install --assumeyes --nodocs "$1" || true' _ \
     && rpm -iv /tmp/kong.rpm \
     && rm -f /tmp/kong.rpm \
     && microdnf clean all \
