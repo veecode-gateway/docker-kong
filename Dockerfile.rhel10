@@ -26,8 +26,11 @@ ARG KONG_ARTIFACT=kong-${KONG_VERSION}.el10.${TARGETARCH}.rpm
 COPY ${KONG_ARTIFACT} /tmp/kong.rpm
 
 # hadolint ignore=DL3041
-RUN rpm -ivh --nodeps /tmp/kong.rpm \
+RUN microdnf install -y shadow-utils \
+    && useradd -r -U kong \
+    && rpm -ivh --nodeps /tmp/kong.rpm \
     && rm -f /tmp/kong.rpm \
+    && microdnf clean all \
     && chown kong:0 /usr/local/bin/kong \
     && chown -R kong:0 /usr/local/kong \
     && ln -sf /usr/local/openresty/bin/resty /usr/local/bin/resty \
