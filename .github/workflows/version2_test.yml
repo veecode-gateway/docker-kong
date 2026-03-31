@@ -1,5 +1,7 @@
 name: Build & Test Version 2
-on: [push, pull_request]
+on:
+  # APIP: auto triggers disabled — run manually if needed
+  workflow_dispatch:
 
 jobs:
   test:

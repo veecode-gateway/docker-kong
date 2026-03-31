@@ -1,7 +1,7 @@
 name: Add assignee to PRs
 on:
-  pull_request:
-    types: [ opened, reopened ]
+  # APIP: PR trigger disabled
+  workflow_dispatch:
 permissions:
   pull-requests: write
 jobs:
