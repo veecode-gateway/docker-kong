@@ -1,0 +1,13 @@
+VeeCode APIP — docker-kong fork
+Modifications Copyright 2025-2026 Vertigo
+
+This software is a derivative work of Kong's docker-kong:
+
+    https://github.com/Kong/docker-kong
+
+Portions are Copyright Kong Inc. and are licensed under the Apache License,
+Version 2.0. The original Kong copyright and license notices are preserved
+in the LICENSE file.
+
+Modifications and additions made by Vertigo are also released under the
+Apache License, Version 2.0 (see LICENSE).
