@@ -81,6 +81,19 @@ build_apip:
 		-f Dockerfile.rhel10 \
 		.
 
+build_apip_distroless: KONG_VERSION?=
+build_apip_distroless: KONG_REPO?=veecode-gateway/kong
+build_apip_distroless: KONG_RPM_URL?=
+build_apip_distroless:
+	docker build \
+		--no-cache \
+		--build-arg KONG_VERSION=$(KONG_VERSION) \
+		--build-arg KONG_REPO=$(KONG_REPO) \
+		$(if $(KONG_RPM_URL),--build-arg KONG_RPM_URL=$(KONG_RPM_URL)) \
+		-t veecode/kong:$(KONG_VERSION)-distroless \
+		-f Dockerfile.distroless.rhel10 \
+		.
+
 release-rhel: build_v2
 	$(MAKE) PACKAGE=rpm build_v2
 	@if \

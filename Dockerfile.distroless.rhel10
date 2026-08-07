@@ -1,0 +1,145 @@
+# Distroless VeeCode Kong image -- published as veecode/kong:<version>-distroless.
+# See ADR-0009 for the dual-image policy; Dockerfile.rhel10 is the regular
+# image and keeps a shell.
+#
+# ubi10-micro ships bash + coreutils-single, and a COPY overlay can never
+# delete files from a base layer -- so a literal "FROM ubi10-micro + COPY
+# rootfs /" cannot be shell-free. Instead the rootfs is *seeded from*
+# ubi10-micro (keeping its rpmdb, os-release and UBI provenance), Kong and
+# its runtime deps are dnf-installed on top in the builder, the shell and
+# tooling packages are erased from the rpmdb (ADR-0008 precedent), and the
+# final stage is FROM scratch + COPY of the assembled rootfs.
+ARG KONG_BASE_IMAGE=registry.access.redhat.com/ubi10-micro
+ARG KONG_BUILDER_IMAGE=registry.access.redhat.com/ubi10
+
+FROM $KONG_BASE_IMAGE AS micro
+
+FROM --platform=$TARGETPLATFORM $KONG_BUILDER_IMAGE AS builder
+
+ARG KONG_VERSION
+ARG TARGETARCH
+ARG KONG_REPO=veecode-gateway/kong
+ARG KONG_RPM_URL=https://github.com/${KONG_REPO}/releases/download/v${KONG_VERSION}/kong-${KONG_VERSION}.el10.${TARGETARCH}.rpm
+
+# Seed the target rootfs from ubi10-micro so the final image keeps micro's
+# exact base content, /etc/os-release and rpmdb.
+COPY --from=micro / /mnt/rootfs
+
+# Assemble the runtime rootfs:
+#  - dnf-install the Kong RPM's runtime deps into the rootfs. libstdc++ and
+#    libxcrypt are NOT declared by the RPM but are required (libada/libexpat/
+#    libsnappy/libsimdjson_ffi need libstdc++; nginx needs libcrypt.so.2);
+#    ubi10-minimal masks this by shipping both. Scriptlets are left enabled:
+#    micro's bash/coreutils are still present at this point, so
+#    ca-certificates %post extracts the trust store properly.
+#  - rpm-install the Kong RPM with --noscripts (its %post is a /bin/sh
+#    scriptlet) and replicate it by hand: kong user/group + chowns.
+#  - patch the '#!/usr/bin/env resty' shebangs of kong/kong-health to the
+#    absolute resty path, so /usr/bin/env (coreutils) is not needed. The
+#    result is asserted right after: if upstream ever changes those shebangs
+#    the sed silently no-ops, so the build must fail here rather than ship a
+#    CLI that cannot start.
+#  - erase the shell and every package only scriptlets/tooling needed
+#    (--noscripts on the erase too: %preun scriptlets would need /bin/sh).
+#  - `kong version` runs chrooted into the rootfs as a build-time gate.
+# hadolint ignore=DL3041,DL4006,SC2016
+RUN curl -fsSL -o /tmp/kong.rpm "$KONG_RPM_URL" \
+    && dnf install --installroot /mnt/rootfs --releasever 10 \
+         --setopt=install_weak_deps=0 --setopt=tsflags=nodocs --assumeyes \
+         ca-certificates libstdc++ libxcrypt libyaml pcre2 zlib \
+    && rpm --root /mnt/rootfs -i --noscripts /tmp/kong.rpm \
+    && rm -f /tmp/kong.rpm \
+    && useradd --prefix /mnt/rootfs -r -U kong \
+    && KUID="$(awk -F: '$1=="kong"{print $3}' /mnt/rootfs/etc/passwd)" \
+    && KGID="$(awk -F: '$1=="kong"{print $4}' /mnt/rootfs/etc/passwd)" \
+    && for f in etc/kong \
+                usr/local/bin/json2lua \
+                usr/local/bin/kong \
+                usr/local/bin/lapis \
+                usr/local/bin/lua2json \
+                usr/local/bin/luarocks \
+                usr/local/bin/luarocks-admin \
+                usr/local/bin/openapi2kong \
+                usr/local/etc/luarocks \
+                usr/local/kong \
+                usr/local/lib/lua \
+                usr/local/lib/luarocks \
+                usr/local/openresty \
+                usr/local/share/lua; do \
+         if [ -e "/mnt/rootfs/$f" ]; then \
+           chown -R "$KUID:$KGID" "/mnt/rootfs/$f" \
+           && chmod -R g=u "/mnt/rootfs/$f"; \
+         fi; \
+       done \
+    && chown "$KUID:0" /mnt/rootfs/usr/local/bin/kong \
+    && chown -R "$KUID:0" /mnt/rootfs/usr/local/kong \
+    && sed -i '1s|^#!/usr/bin/env resty$|#!/usr/local/openresty/bin/resty|' \
+         /mnt/rootfs/usr/local/bin/kong \
+         /mnt/rootfs/usr/local/bin/kong-health \
+    && head -1 /mnt/rootfs/usr/local/bin/kong \
+         | grep -qx '#!/usr/local/openresty/bin/resty' \
+    && head -1 /mnt/rootfs/usr/local/bin/kong-health \
+         | grep -qx '#!/usr/local/openresty/bin/resty' \
+    && mkdir -p /mnt/rootfs/licenses \
+    && cp /mnt/rootfs/usr/share/licenses/kong/* /mnt/rootfs/licenses/ \
+    && ln -sf /usr/local/openresty/bin/resty /mnt/rootfs/usr/local/bin/resty \
+    && ln -sf /usr/local/openresty/luajit/bin/luajit /mnt/rootfs/usr/local/bin/luajit \
+    && ln -sf /usr/local/openresty/luajit/bin/luajit /mnt/rootfs/usr/local/bin/lua \
+    && ln -sf /usr/local/openresty/nginx/sbin/nginx /mnt/rootfs/usr/local/bin/nginx \
+    && rm -f /mnt/rootfs/usr/local/openresty/bin/md2pod.pl \
+             /mnt/rootfs/usr/local/openresty/bin/nginx-xml2pod \
+             /mnt/rootfs/usr/local/openresty/bin/opm \
+             /mnt/rootfs/usr/local/openresty/bin/restydoc \
+             /mnt/rootfs/usr/local/openresty/bin/restydoc-index \
+    && rpm --root /mnt/rootfs -e --nodeps --noscripts \
+         alternatives audit-libs bash coreutils-single findutils grep \
+         libacl libattr libcap libcap-ng libeconf libffi libselinux libsepol \
+         libtasn1 ncurses-base ncurses-libs p11-kit p11-kit-trust pam-libs sed \
+    && dnf clean all --installroot /mnt/rootfs \
+    && rm -rf /mnt/rootfs/var/cache/* \
+              /mnt/rootfs/var/log/* \
+              /mnt/rootfs/var/lib/dnf \
+              /mnt/rootfs/run/* \
+              /mnt/rootfs/tmp/* \
+    && ldconfig -r /mnt/rootfs \
+    && test ! -e /mnt/rootfs/usr/bin/bash \
+    && test ! -e /mnt/rootfs/bin/sh \
+    && chroot /mnt/rootfs /usr/local/bin/kong version
+
+
+FROM scratch
+
+LABEL maintainer="VeeCode <docker@veecode.codes>"
+
+ARG KONG_VERSION
+ENV KONG_VERSION=$KONG_VERSION
+
+LABEL name="Kong" \
+      vendor="VeeCode" \
+      version="$KONG_VERSION" \
+      release="1" \
+      url="https://konghq.com" \
+      summary="VeeCode APIP - API Platform based on Kong Gateway (distroless)" \
+      description="VeeCode APIP - API Platform based on Kong Gateway (distroless)"
+
+ARG KONG_PREFIX=/usr/local/kong
+ENV KONG_PREFIX=$KONG_PREFIX \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+COPY --from=builder /mnt/rootfs/ /
+
+COPY LICENSE /licenses/
+
+COPY docker-entrypoint.lua /docker-entrypoint.lua
+
+USER kong
+
+ENTRYPOINT ["/usr/local/openresty/bin/resty", "/docker-entrypoint.lua"]
+
+EXPOSE 8000 8443 8001 8444
+
+STOPSIGNAL SIGQUIT
+
+HEALTHCHECK --interval=60s --timeout=10s --retries=10 CMD ["kong-health"]
+
+CMD ["kong", "docker-start"]

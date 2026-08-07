@@ -1,34 +1,89 @@
 #!/usr/bin/env bash
 
-# VeeCode APIP (ADR-0008): tests for the Lua docker-entrypoint and the
-# shell-free runtime image. Uses the image in $KONG_DOCKER_TAG (falls back
-# to the harness default kong-$BASE).
+# VeeCode APIP (ADR-0008/ADR-0009): tests for the Lua docker-entrypoint,
+# run against either published image variant. Uses the image in
+# $KONG_DOCKER_TAG (falls back to the harness default kong-$BASE).
+#
+# Everything below the "image-variant assertions" chapter is contract-level
+# and must pass against BOTH images. The variant-specific chapter asserts the
+# shell-free property of the distroless image and, conversely, that the
+# regular image still has a working shell.
+#
+# The variant is taken from $KONG_DISTROLESS (1/0); when unset it is derived
+# from a `-distroless` suffix on the image tag.
 
 function run_test {
   tinitialize "Docker-Kong test suite" "${BASH_SOURCE[0]}"
 
-  tchapter "Lua entrypoint / shell-free image"
-
   local img="${KONG_DOCKER_TAG:-kong-$BASE}"
   local resty=/usr/local/openresty/bin/resty
-
-  ttest "bash and /bin/sh are absent from the image"
-  if docker run --rm --entrypoint /bin/bash "$img" -c true 2>/dev/null \
-     || docker run --rm --entrypoint /bin/sh "$img" -c true 2>/dev/null; then
-    tmessage "a shell is still present in the image"
-    tfailure
-  else
-    tsuccess
+  local distroless="${KONG_DISTROLESS:-}"
+  if [ -z "$distroless" ]; then
+    case "$img" in
+      *-distroless) distroless=1 ;;
+      *)            distroless=0 ;;
+    esac
   fi
 
-  ttest "bash, findutils, shadow-utils and unzip RPMs are not installed"
-  if docker run --rm "$img" rpm -q bash findutils shadow-utils unzip 2>/dev/null \
-       | grep -v 'not installed' | grep -q '^'; then
-    tmessage "one of the build-only packages is still installed"
-    tfailure
+  tchapter "Image-variant assertions ($([ "$distroless" = 1 ] && echo distroless || echo regular))"
+
+  if [ "$distroless" = 1 ]; then
+    ttest "bash and /bin/sh are absent from the image"
+    if docker run --rm --entrypoint /bin/bash "$img" -c true 2>/dev/null \
+       || docker run --rm --entrypoint /bin/sh "$img" -c true 2>/dev/null; then
+      tmessage "a shell is still present in the distroless image"
+      tfailure
+    else
+      tsuccess
+    fi
+
+    # No rpm binary in this image, so probe the filesystem via resty instead
+    # of asking the package database.
+    ttest "no shell, package manager or build-helper binaries on disk"
+    if docker run --rm --entrypoint "$resty" "$img" -e '
+         for _, f in ipairs({ "/usr/bin/bash", "/bin/sh", "/usr/bin/rpm",
+                              "/usr/bin/dnf", "/usr/bin/microdnf",
+                              "/usr/bin/find", "/usr/sbin/useradd",
+                              "/usr/bin/env" }) do
+           local fd = io.open(f)
+           if fd then fd:close() error(f .. " still present") end
+         end
+         print("absent")' | grep -q absent; then
+      tsuccess
+    else
+      tmessage "a shell/package-manager/build-helper binary survived in the distroless image"
+      tfailure
+    fi
   else
-    tsuccess
+    ttest "bash is present and usable in the regular image"
+    if [ "$(docker run --rm --entrypoint /usr/bin/bash "$img" -c 'echo ok' 2>/dev/null)" = "ok" ]; then
+      tsuccess
+    else
+      tmessage "bash is missing or not usable in the regular image"
+      tfailure
+    fi
+
+    ttest "bash, findutils and shadow-utils RPMs are installed"
+    if docker run --rm "$img" rpm -q bash findutils shadow-utils >/dev/null 2>&1; then
+      tsuccess
+    else
+      tmessage "one of bash/findutils/shadow-utils is not installed"
+      tfailure
+    fi
   fi
+
+  ttest "unzip is not installed"
+  if docker run --rm --entrypoint "$resty" "$img" -e '
+       local fd = io.open("/usr/bin/unzip")
+       if fd then fd:close() error("unzip still present") end
+       print("absent")' | grep -q absent; then
+    tsuccess
+  else
+    tmessage "unzip is present in the image"
+    tfailure
+  fi
+
+  tchapter "Lua entrypoint contract"
 
   ttest "inert OpenResty Perl scripts are pruned from openresty/bin"
   if docker run --rm --entrypoint "$resty" "$img" -e '

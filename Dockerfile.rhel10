@@ -23,10 +23,13 @@ ARG TARGETARCH
 ARG KONG_REPO=veecode-gateway/kong
 ARG KONG_RPM_URL=https://github.com/${KONG_REPO}/releases/download/v${KONG_VERSION}/kong-${KONG_VERSION}.el10.${TARGETARCH}.rpm
 
-# findutils (xargs) and shadow-utils (useradd) are build-time helpers only:
-# they are removed again at the end of this RUN, together with bash, to ship
-# a shell-free runtime image (ADR-0008). `rpm -e --nodeps bash` must be the
-# very last step -- nothing after it can rely on a shell.
+# This image keeps a working shell (bash) plus findutils and shadow-utils, so
+# operators can `docker exec ... bash` and downstream `FROM` users can
+# microdnf-install without first reinstalling a shell. The shell-free build is
+# published separately as the `-distroless` variant -- see
+# Dockerfile.distroless.rhel10 and ADR-0009.
+# The runtime deps are discovered from the RPM's own requires (`rpm -qpR`),
+# so a change to the RPM's declared dependencies needs no edit here.
 # hadolint ignore=DL3041,DL3003
 RUN microdnf install --assumeyes --nodocs \
       ca-certificates \
@@ -55,9 +58,7 @@ RUN microdnf install --assumeyes --nodocs \
              /usr/local/openresty/bin/opm \
              /usr/local/openresty/bin/restydoc \
              /usr/local/openresty/bin/restydoc-index \
-    && microdnf remove --assumeyes findutils shadow-utils \
-    && microdnf clean all \
-    && rpm -e --nodeps bash
+    && microdnf clean all
 
 COPY docker-entrypoint.lua /docker-entrypoint.lua
 
