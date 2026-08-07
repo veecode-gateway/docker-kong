@@ -38,12 +38,32 @@ services:
       - kong-net
     restart: on-failure
 
+  # The previous single `kong migrations up && kong migrations finish`
+  # command needed a shell; the image is shell-free (ADR-0008), so the two
+  # steps are split into sequenced exec-form services.
   kong-migrations-up:
     image: "${KONG_DOCKER_TAG:-kong:latest}"
-    command: kong migrations up && kong migrations finish
+    command: [ "kong", "migrations", "up" ]
     profiles: [ "database" ]
     depends_on:
       - db
+    environment:
+      <<: *kong-env
+    secrets:
+      - kong_postgres_password
+    networks:
+      - kong-net
+    restart: on-failure
+
+  kong-migrations-finish:
+    image: "${KONG_DOCKER_TAG:-kong:latest}"
+    command: [ "kong", "migrations", "finish" ]
+    profiles: [ "database" ]
+    depends_on:
+      db:
+        condition: service_started
+      kong-migrations-up:
+        condition: service_completed_successfully
     environment:
       <<: *kong-env
     secrets:

@@ -23,6 +23,10 @@ ARG TARGETARCH
 ARG KONG_REPO=veecode-gateway/kong
 ARG KONG_RPM_URL=https://github.com/${KONG_REPO}/releases/download/v${KONG_VERSION}/kong-${KONG_VERSION}.el10.${TARGETARCH}.rpm
 
+# findutils (xargs) and shadow-utils (useradd) are build-time helpers only:
+# they are removed again at the end of this RUN, together with bash, to ship
+# a shell-free runtime image (ADR-0008). `rpm -e --nodeps bash` must be the
+# very last step -- nothing after it can rely on a shell.
 # hadolint ignore=DL3041,DL3003
 RUN microdnf install --assumeyes --nodocs \
       ca-certificates \
@@ -30,7 +34,6 @@ RUN microdnf install --assumeyes --nodocs \
       libyaml \
       pcre2 \
       shadow-utils \
-      unzip \
       zlib \
     && useradd -r -U kong \
     && curl -fsSL -o /tmp/kong.rpm "$KONG_RPM_URL" \
@@ -39,7 +42,6 @@ RUN microdnf install --assumeyes --nodocs \
          | xargs -r -n1 microdnf install --assumeyes --nodocs \
     && rpm -iv /tmp/kong.rpm \
     && rm -f /tmp/kong.rpm \
-    && microdnf clean all \
     && cp /usr/share/licenses/kong/* /licenses/ \
     && chown kong:0 /usr/local/bin/kong \
     && chown -R kong:0 /usr/local/kong \
@@ -47,18 +49,26 @@ RUN microdnf install --assumeyes --nodocs \
     && ln -sf /usr/local/openresty/luajit/bin/luajit /usr/local/bin/luajit \
     && ln -sf /usr/local/openresty/luajit/bin/luajit /usr/local/bin/lua \
     && ln -sf /usr/local/openresty/nginx/sbin/nginx /usr/local/bin/nginx \
-    && kong version
+    && kong version \
+    && rm -f /usr/local/openresty/bin/md2pod.pl \
+             /usr/local/openresty/bin/nginx-xml2pod \
+             /usr/local/openresty/bin/opm \
+             /usr/local/openresty/bin/restydoc \
+             /usr/local/openresty/bin/restydoc-index \
+    && microdnf remove --assumeyes findutils shadow-utils \
+    && microdnf clean all \
+    && rpm -e --nodeps bash
 
-COPY docker-entrypoint.sh /docker-entrypoint.sh
+COPY docker-entrypoint.lua /docker-entrypoint.lua
 
 USER kong
 
-ENTRYPOINT ["/docker-entrypoint.sh"]
+ENTRYPOINT ["/usr/local/openresty/bin/resty", "/docker-entrypoint.lua"]
 
 EXPOSE 8000 8443 8001 8444
 
 STOPSIGNAL SIGQUIT
 
-HEALTHCHECK --interval=60s --timeout=10s --retries=10 CMD kong-health
+HEALTHCHECK --interval=60s --timeout=10s --retries=10 CMD ["kong-health"]
 
 CMD ["kong", "docker-start"]
